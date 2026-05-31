@@ -7,65 +7,67 @@ import { getLists } from '../src/services/ListService';
 
 const SAMPLE_EXPORT_PATH = path.resolve(process.cwd(), 'scratch', 'rtm_sample.json');
 
+/** Build a realistic RTM flat-export sample matching the actual schema. */
+function buildSample() {
+  return {
+    config: { username: 'testuser' },
+    lists: [
+      { id: 'list_1', name: 'Personal Tasks', date_created: 1000000000000 },
+      { id: 'list_2', name: 'Work', date_created: 1000000000000 },
+    ],
+    tasks: [
+      {
+        id: 'task_1',
+        series_id: 'series_1',
+        list_id: 'list_1',
+        name: 'Buy groceries',
+        priority: 'P1',
+        date_created: 1000000000000,
+        date_modified: 1000000000000,
+        date_due: 1750032000000, // 2026-06-15
+        tags: ['shopping', 'household'],
+      },
+      {
+        id: 'task_2',
+        series_id: 'series_2',
+        list_id: 'list_1',
+        name: 'Old completed task',
+        priority: 'PN',
+        date_created: 1000000000000,
+        date_modified: 1000000000000,
+        date_completed: 1000000000000,
+        tags: [],
+      },
+    ],
+    notes: [
+      {
+        id: 'note_1',
+        series_id: 'series_1', // Attached to "Buy groceries" task
+        date_created: 1000000000000,
+        date_modified: 1000000000000,
+        title: '',
+        content: "Check local market or Sainsbury's.",
+      },
+    ],
+    smart_lists: [],
+  };
+}
+
 describe('ImportService', () => {
   beforeEach(() => {
-    // Create scratch directory and seed a sample export file
     fs.mkdirSync(path.dirname(SAMPLE_EXPORT_PATH), { recursive: true });
-    const sample = {
-      lists: [
-        {
-          id: 'rtm_list_1',
-          name: 'Personal Tasks',
-          taskseries: [
-            {
-              id: 'rtm_series_1',
-              name: 'Buy groceries',
-              tags: 'shopping, household',
-              notes: [
-                {
-                  id: 'rtm_note_1',
-                  title: 'Store options',
-                  $t: 'Check local market or Sainsbury\'s.',
-                }
-              ],
-              task: [
-                {
-                  id: 'rtm_task_1',
-                  due: '2026-06-15T00:00:00Z',
-                  completed: '',
-                  priority: '1',
-                }
-              ]
-            },
-            {
-              id: 'rtm_series_2',
-              name: 'Old completed task',
-              task: [
-                {
-                  id: 'rtm_task_2',
-                  completed: '2026-05-01T12:00:00Z',
-                  priority: 'N',
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    };
-    fs.writeFileSync(SAMPLE_EXPORT_PATH, JSON.stringify(sample), 'utf-8');
+    fs.writeFileSync(SAMPLE_EXPORT_PATH, JSON.stringify(buildSample()), 'utf-8');
   });
 
   afterEach(() => {
-    try {
-      fs.unlinkSync(SAMPLE_EXPORT_PATH);
-    } catch {}
+    try { fs.unlinkSync(SAMPLE_EXPORT_PATH); } catch {}
   });
 
   it('should import lists, tasks, tags, and notes successfully', async () => {
     const summary = await importRTM(SAMPLE_EXPORT_PATH, { dryRun: false });
 
     expect(summary.errors).toHaveLength(0);
-    expect(summary.listsImported).toBe(1);
+    expect(summary.listsImported).toBe(2);
     expect(summary.tasksImported).toBe(2);
     expect(summary.notesImported).toBe(1);
     expect(summary.dryRun).toBe(false);
@@ -73,8 +75,8 @@ describe('ImportService', () => {
     const lists = await getLists();
     expect(lists.some((l) => l.name === 'Personal Tasks')).toBe(true);
 
-    const tasks = await getTasks({ completed: false });
-    const buyGroceries = tasks.find((t) => t.title === 'Buy groceries');
+    const allTasks = await getTasks({ completed: false });
+    const buyGroceries = allTasks.find((t) => t.title === 'Buy groceries');
     expect(buyGroceries).toBeDefined();
     expect(buyGroceries!.dueDate).toBe('2026-06-15');
     expect(buyGroceries!.priority).toBe(1);
@@ -83,19 +85,28 @@ describe('ImportService', () => {
 
   it('should skip completed tasks if openOnly option is passed', async () => {
     const summary = await importRTM(SAMPLE_EXPORT_PATH, { dryRun: false, openOnly: true });
-
-    expect(summary.tasksImported).toBe(1);
-    expect(summary.tasksSkipped).toBe(1); // the completed one
+    expect(summary.tasksImported).toBe(1); // only the incomplete one
+    expect(summary.tasksSkipped).toBe(1);  // the completed one
   });
 
-  it('should rollback transaction and perform no changes if dryRun option is passed', async () => {
+  it('should rollback transaction and perform no changes if dryRun is true', async () => {
     const summary = await importRTM(SAMPLE_EXPORT_PATH, { dryRun: true });
 
     expect(summary.tasksImported).toBe(2);
     expect(summary.dryRun).toBe(true);
 
-    // Verify nothing got saved to DB
+    // Nothing persisted
     const lists = await getLists();
     expect(lists).toHaveLength(0);
+  });
+
+  it('should be idempotent when run twice', async () => {
+    await importRTM(SAMPLE_EXPORT_PATH, { dryRun: false });
+    const summary2 = await importRTM(SAMPLE_EXPORT_PATH, { dryRun: false });
+
+    expect(summary2.errors).toHaveLength(0);
+    expect(summary2.tasksImported).toBe(0);
+    expect(summary2.tasksSkipped).toBe(2);
+    expect(summary2.listsSkipped).toBe(2);
   });
 });

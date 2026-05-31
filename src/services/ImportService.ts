@@ -3,56 +3,87 @@ import { randomUUID } from 'crypto';
 import { getDb } from '../db/knex';
 import type { ImportOptions, ImportSummary, Priority } from '../types';
 
-interface RTMNote {
-  id: string;
-  title?: string;
-  $t?: string;
-  text?: string;
-}
-
-interface RTMTaskInstance {
-  id: string;
-  due?: string;
-  completed?: string;
-  added?: string;
-  priority?: string;
-}
-
-interface RTMTaskSeries {
-  id: string;
-  name: string;
-  created?: string;
-  modified?: string;
-  tags?: string[] | string;
-  notes?: RTMNote[] | RTMNote;
-  task?: RTMTaskInstance[] | RTMTaskInstance;
-}
+// ─── RTM export shape (actual flat export format) ─────────────────────────────
 
 interface RTMList {
   id: string;
   name: string;
-  taskseries?: RTMTaskSeries[] | RTMTaskSeries;
+  date_created?: number;
+  date_modified?: number;
+  date_archived?: number;
+  syncable?: boolean;
+}
+
+interface RTMTask {
+  id: string;
+  series_id: string;
+  list_id: string;
+  name: string;
+  priority: string;          // "PN" | "P1" | "P2" | "P3"
+  date_created?: number;     // Unix ms
+  date_added?: number;       // Unix ms
+  date_modified?: number;    // Unix ms
+  date_completed?: number;   // Unix ms (absent/null if not done)
+  date_due?: number;         // Unix ms (absent/null if no due date)
+  date_due_has_time?: boolean;
+  date_start?: number;       // Unix ms
+  date_start_has_time?: boolean;
+  postponed?: number;
+  source?: string;
+  repeat?: string | false;
+  repeat_every?: string | boolean;
+  parent_id?: string;
+  tags?: string[];
+}
+
+interface RTMNote {
+  id: string;
+  series_id: string;         // Matches task.series_id
+  date_created?: number;
+  date_modified?: number;
+  title?: string;
+  content?: string;
 }
 
 interface RTMExport {
-  rsp?: {
-    lists?: {
-      list?: RTMList[];
-    };
-  };
   lists?: RTMList[];
+  tasks?: RTMTask[];
+  notes?: RTMNote[];
+  // other top-level keys ignored
 }
 
-function ensureArray<T>(val: T[] | T | undefined): T[] {
-  if (val === undefined) return [];
-  return Array.isArray(val) ? val : [val];
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Convert Unix millisecond timestamp → "YYYY-MM-DD" or null. */
+function msToDate(ms?: number | null): string | null {
+  if (!ms) return null;
+  return new Date(ms).toISOString().slice(0, 10);
 }
+
+/** Convert Unix millisecond timestamp → ISO-8601 string or null. */
+function msToISO(ms?: number | null): string | null {
+  if (!ms) return null;
+  return new Date(ms).toISOString();
+}
+
+/** Map RTM priority code to our 0-3 scale. */
+function mapPriority(code: string): Priority {
+  switch (code) {
+    case 'P1': return 1;
+    case 'P2': return 2;
+    case 'P3': return 3;
+    default:   return 0;  // 'PN' or anything else
+  }
+}
+
+// ─── Main importer ────────────────────────────────────────────────────────────
 
 export async function importRTM(
   filePath: string,
   options: ImportOptions = {}
 ): Promise<ImportSummary> {
   const { dryRun = false, openOnly = false } = options;
+
   const summary: ImportSummary = {
     listsImported: 0,
     listsSkipped: 0,
@@ -63,229 +94,230 @@ export async function importRTM(
     dryRun,
   };
 
-  let rawData: string;
+  // ── Parse file ──────────────────────────────────────────────────────────────
+  let raw: string;
   try {
-    rawData = fs.readFileSync(filePath, 'utf-8');
+    raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err: any) {
-    summary.errors.push(`Failed to read file: ${err.message}`);
+    summary.errors.push(`Cannot read file: ${err.message}`);
     return summary;
   }
 
   let parsed: RTMExport;
   try {
-    parsed = JSON.parse(rawData);
+    parsed = JSON.parse(raw);
   } catch (err: any) {
-    summary.errors.push(`Failed to parse JSON: ${err.message}`);
+    summary.errors.push(`Cannot parse JSON: ${err.message}`);
     return summary;
   }
 
-  let rtmLists: RTMList[] = [];
-  if (parsed.lists) {
-    rtmLists = parsed.lists;
-  } else if (parsed.rsp?.lists?.list) {
-    rtmLists = parsed.rsp.lists.list;
-  } else {
-    summary.errors.push('No lists found in RTM JSON export.');
+  const rtmLists  = parsed.lists  ?? [];
+  const rtmTasks  = parsed.tasks  ?? [];
+  const rtmNotes  = parsed.notes  ?? [];
+
+  if (rtmLists.length === 0) {
+    summary.errors.push('No lists found in export.');
     return summary;
   }
 
+  // ── Build note lookup: series_id → notes[] ──────────────────────────────────
+  const notesBySeries = new Map<string, RTMNote[]>();
+  for (const note of rtmNotes) {
+    if (!note.series_id) continue;
+    if (!notesBySeries.has(note.series_id)) notesBySeries.set(note.series_id, []);
+    notesBySeries.get(note.series_id)!.push(note);
+  }
+
+  // ── Transaction ─────────────────────────────────────────────────────────────
   const db = getDb();
 
   await db.transaction(async (trx) => {
-    const listMap = new Map<string, string>();
+    const now = new Date().toISOString();
 
-    const existingListImports = await trx('import_records')
-      .where({ source: 'rtm', entity_type: 'list' });
-    for (const rec of existingListImports) {
-      listMap.set(rec.external_id, rec.internal_id);
-    }
+    // Map RTM list id → internal list id
+    const listIdMap = new Map<string, string>();
 
+    // ── Import lists ──────────────────────────────────────────────────────────
     for (const rtmList of rtmLists) {
-      let internalListId = listMap.get(rtmList.id);
+      // Skip archived / system lists with no meaningful name
+      if (!rtmList.name?.trim()) continue;
 
-      if (!internalListId) {
-        const matchedList = await trx('lists')
-          .where({ name: rtmList.name, is_archived: 0 })
-          .first();
+      const alreadyImported = await trx('import_records')
+        .where({ source: 'rtm', external_id: rtmList.id, entity_type: 'list' })
+        .first();
 
-        if (matchedList) {
-          internalListId = matchedList.id;
-          listMap.set(rtmList.id, internalListId!);
-          summary.listsSkipped++;
-          if (!dryRun) {
-            await trx('import_records').insert({
-              id: randomUUID(),
-              source: 'rtm',
-              external_id: rtmList.id,
-              entity_type: 'list',
-              internal_id: internalListId!,
-              imported_at: new Date().toISOString(),
-            });
-          }
-        } else {
-          internalListId = randomUUID();
-          listMap.set(rtmList.id, internalListId!);
-
-          if (!dryRun) {
-            const maxOrderRow = await trx('lists').max('sort_order as m').first();
-            const sortOrder = ((maxOrderRow?.m as number | null) ?? -1) + 1;
-
-            await trx('lists').insert({
-              id: internalListId,
-              name: rtmList.name.trim(),
-              is_smart: 0,
-              smart_filter: null,
-              is_archived: 0,
-              sort_order: sortOrder,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
-
-            await trx('import_records').insert({
-              id: randomUUID(),
-              source: 'rtm',
-              external_id: rtmList.id,
-              entity_type: 'list',
-              internal_id: internalListId,
-              imported_at: new Date().toISOString(),
-            });
-          }
-          summary.listsImported++;
-        }
-      } else {
+      if (alreadyImported) {
+        listIdMap.set(rtmList.id, alreadyImported.internal_id);
         summary.listsSkipped++;
+        continue;
       }
 
-      const taskseriesList = ensureArray(rtmList.taskseries);
+      // Reuse existing list with the same name if present
+      const existing = await trx('lists')
+        .where({ name: rtmList.name.trim(), is_archived: 0 })
+        .first();
 
-      for (const series of taskseriesList) {
-        const taskInstances = ensureArray(series.task);
+      let internalListId: string;
+      if (existing) {
+        internalListId = existing.id;
+        summary.listsSkipped++;
+      } else {
+        internalListId = randomUUID();
+        const maxRow = await trx('lists').max('sort_order as m').first();
+        const sortOrder = ((maxRow?.m as number | null) ?? -1) + 1;
 
-        for (const inst of taskInstances) {
-          const isCompleted = inst.completed ? true : false;
-          if (openOnly && isCompleted) {
-            summary.tasksSkipped++;
-            continue;
+        if (!dryRun) {
+          await trx('lists').insert({
+            id: internalListId,
+            name: rtmList.name.trim(),
+            is_smart: 0,
+            smart_filter: null,
+            is_archived: rtmList.date_archived ? 1 : 0,
+            sort_order: sortOrder,
+            created_at: msToISO(rtmList.date_created) ?? now,
+            updated_at: msToISO(rtmList.date_modified) ?? now,
+          });
+        }
+        summary.listsImported++;
+      }
+
+      listIdMap.set(rtmList.id, internalListId);
+
+      if (!dryRun) {
+        await trx('import_records').insert({
+          id: randomUUID(),
+          source: 'rtm',
+          external_id: rtmList.id,
+          entity_type: 'list',
+          internal_id: internalListId,
+          imported_at: now,
+        }).onConflict(['source', 'external_id', 'entity_type']).ignore();
+      }
+    }
+
+    // ── Import tasks ──────────────────────────────────────────────────────────
+    for (const rtmTask of rtmTasks) {
+      const isCompleted = !!rtmTask.date_completed;
+
+      if (openOnly && isCompleted) {
+        summary.tasksSkipped++;
+        continue;
+      }
+
+      // Skip if already imported (idempotent by task id)
+      const alreadyImported = await trx('import_records')
+        .where({ source: 'rtm', external_id: rtmTask.id, entity_type: 'task' })
+        .first();
+
+      if (alreadyImported) {
+        summary.tasksSkipped++;
+        continue;
+      }
+
+      // Resolve list
+      const internalListId = listIdMap.get(rtmTask.list_id);
+      if (!internalListId) {
+        // List wasn't imported (e.g. system list) — skip
+        summary.tasksSkipped++;
+        continue;
+      }
+
+      const dueDate = msToDate(rtmTask.date_due);
+      const completedAt = msToISO(rtmTask.date_completed);
+      const createdAt = msToISO(rtmTask.date_created ?? rtmTask.date_added) ?? now;
+      const updatedAt = msToISO(rtmTask.date_modified) ?? now;
+      const priority = mapPriority(rtmTask.priority ?? 'PN');
+      const tags = Array.isArray(rtmTask.tags) ? rtmTask.tags : [];
+
+      const internalTaskId = randomUUID();
+
+      if (!dryRun) {
+        try {
+          await trx('tasks').insert({
+            id: internalTaskId,
+            list_id: internalListId,
+            parent_id: null,
+            series_id: rtmTask.series_id ?? null,
+            title: (rtmTask.name || 'Untitled').trim(),
+            description: null,
+            priority,
+            due_date: dueDate,
+            rrule: null,
+            is_completed: isCompleted ? 1 : 0,
+            is_archived: 0,
+            completed_at: completedAt,
+            created_at: createdAt,
+            updated_at: updatedAt,
+          });
+
+          if (tags.length > 0) {
+            await trx('task_tags').insert(
+              tags.map((tag) => ({ task_id: internalTaskId, tag: tag.toLowerCase().trim() }))
+            );
           }
 
-          const alreadyImported = await trx('import_records')
-            .where({ source: 'rtm', external_id: inst.id, entity_type: 'task' })
-            .first();
-
-          if (alreadyImported) {
-            summary.tasksSkipped++;
-            continue;
-          }
-
-          let priority: Priority = 0;
-          if (inst.priority === '1') priority = 1;
-          else if (inst.priority === '2') priority = 2;
-          else if (inst.priority === '3') priority = 3;
-
-          const dueDate = inst.due ? inst.due.slice(0, 10) : null;
-
-          let tags: string[] = [];
-          if (series.tags) {
-            if (Array.isArray(series.tags)) {
-              tags = series.tags;
-            } else if (typeof series.tags === 'string') {
-              tags = series.tags.split(',').map((t) => t.trim()).filter(Boolean);
-            }
-          }
-
-          const internalTaskId = randomUUID();
-          if (!dryRun) {
-            try {
-              const now = new Date().toISOString();
-              await trx('tasks').insert({
-                id: internalTaskId,
-                list_id: internalListId,
-                parent_id: null,
-                series_id: series.id || null,
-                title: (series.name || 'Untitled Task').trim(),
-                description: null,
-                priority,
-                due_date: dueDate,
-                rrule: null,
-                is_completed: isCompleted ? 1 : 0,
-                is_archived: 0,
-                completed_at: isCompleted ? (inst.completed || now) : null,
-                created_at: now,
-                updated_at: now,
-              });
-
-              if (tags.length > 0) {
-                await trx('task_tags').insert(
-                  tags.map((tag) => ({
-                    task_id: internalTaskId,
-                    tag: tag.toLowerCase().trim(),
-                  }))
-                );
-              }
-
-              await trx('import_records').insert({
-                id: randomUUID(),
-                source: 'rtm',
-                external_id: inst.id,
-                entity_type: 'task',
-                internal_id: internalTaskId,
-                imported_at: new Date().toISOString(),
-              });
-            } catch (err: any) {
-              summary.errors.push(`Failed to import task "${series.name}": ${err.message}`);
-              continue;
-            }
-          }
-          summary.tasksImported++;
-
-          const notesList = ensureArray(series.notes);
-          for (const note of notesList) {
-            const noteBody = note.$t || note.text || note.title || '';
-            if (!noteBody) continue;
-
-            const noteAlreadyImported = await trx('import_records')
-              .where({ source: 'rtm', external_id: note.id, entity_type: 'note' })
-              .first();
-
-            if (noteAlreadyImported) {
-              continue;
-            }
-
-            if (!dryRun) {
-              try {
-                const now = new Date().toISOString();
-                const internalNoteId = randomUUID();
-                await trx('task_notes').insert({
-                  id: internalNoteId,
-                  task_id: internalTaskId,
-                  body: noteBody.trim(),
-                  created_at: now,
-                  updated_at: now,
-                });
-
-                await trx('import_records').insert({
-                  id: randomUUID(),
-                  source: 'rtm',
-                  external_id: note.id,
-                  entity_type: 'note',
-                  internal_id: internalNoteId,
-                  imported_at: new Date().toISOString(),
-                });
-              } catch (err: any) {
-                summary.errors.push(`Failed to import note for task "${series.name}": ${err.message}`);
-                continue;
-              }
-            }
-            summary.notesImported++;
-          }
+          await trx('import_records').insert({
+            id: randomUUID(),
+            source: 'rtm',
+            external_id: rtmTask.id,
+            entity_type: 'task',
+            internal_id: internalTaskId,
+            imported_at: now,
+          });
+        } catch (err: any) {
+          summary.errors.push(`Task "${rtmTask.name}": ${err.message}`);
+          continue;
         }
       }
+
+      summary.tasksImported++;
+
+      // ── Import notes for this task (matched via series_id) ────────────────
+      const taskNotes = notesBySeries.get(rtmTask.series_id) ?? [];
+      for (const note of taskNotes) {
+        const noteBody = (note.content || note.title || '').trim();
+        if (!noteBody) continue;
+
+        const noteAlreadyDone = await trx('import_records')
+          .where({ source: 'rtm', external_id: note.id, entity_type: 'note' })
+          .first();
+        if (noteAlreadyDone) continue;
+
+        if (!dryRun) {
+          try {
+            const internalNoteId = randomUUID();
+            const noteCreated = msToISO(note.date_created) ?? now;
+            const noteUpdated = msToISO(note.date_modified) ?? now;
+
+            await trx('task_notes').insert({
+              id: internalNoteId,
+              task_id: internalTaskId,
+              body: noteBody,
+              created_at: noteCreated,
+              updated_at: noteUpdated,
+            });
+
+            await trx('import_records').insert({
+              id: randomUUID(),
+              source: 'rtm',
+              external_id: note.id,
+              entity_type: 'note',
+              internal_id: internalNoteId,
+              imported_at: now,
+            });
+          } catch (err: any) {
+            summary.errors.push(`Note for task "${rtmTask.name}": ${err.message}`);
+            continue;
+          }
+        }
+        summary.notesImported++;
+      }
     }
 
-    if (dryRun) {
-      throw new Error('DRY_RUN_ROLLBACK');
-    }
-  }).catch((err) => {
+    // Force rollback for dry runs
+    if (dryRun) throw new Error('DRY_RUN_ROLLBACK');
+
+  }).catch((err: Error) => {
     if (err.message !== 'DRY_RUN_ROLLBACK') {
       summary.errors.push(`Transaction error: ${err.message}`);
     }
