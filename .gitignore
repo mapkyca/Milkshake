@@ -1,0 +1,26 @@
+node_modules/
+dist/
+coverage/
+
+# Local data (owned by user, not part of repo)
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*

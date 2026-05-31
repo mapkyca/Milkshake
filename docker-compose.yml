@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      # User data – lives on the host, never inside the container
+      - ./data:/data
+      - ./vault:/vault
+    environment:
+      DATABASE_PATH: /data/tasks.sqlite
+      VAULT_PATH: /vault
+      PORT: 3000
+      TZ: Europe/London
+      NODE_ENV: production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
