@@ -30,6 +30,8 @@ export function getNextOccurrence(rruleString: string, after: Date, dtstart?: Da
     const options = RRule.parseString(normalised);
     if (dtstart) {
       options.dtstart = dtstart;
+    } else if (!options.dtstart) {
+      options.dtstart = after;
     }
     const rule = new RRule(options);
     const next = rule.after(after, false);
@@ -37,6 +39,13 @@ export function getNextOccurrence(rruleString: string, after: Date, dtstart?: Da
   } catch {
     try {
       const rule = RRule.fromString(normaliseRRule(rruleString));
+      if (dtstart) {
+        const options = { ...rule.options, dtstart };
+        return new RRule(options).after(after, false) ?? null;
+      } else if (!rule.options.dtstart) {
+        const options = { ...rule.options, dtstart: after };
+        return new RRule(options).after(after, false) ?? null;
+      }
       return rule.after(after, false) ?? null;
     } catch {
       return null;

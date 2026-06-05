@@ -44,21 +44,37 @@ export default function TaskPanel({
 
   if (!taskId) return null;
 
-  const handleSave = async () => {
+  const handleSave = async (updatedFields?: {
+    title?: string;
+    description?: string;
+    dueDate?: string | null;
+    priority?: 0 | 1 | 2 | 3;
+    listId?: string;
+    rrule?: string;
+    tagsStr?: string;
+  }) => {
     setIsSaving(true);
     try {
-      const tags = tagsStr
+      const activeTitle = updatedFields && 'title' in updatedFields ? updatedFields.title : title;
+      const activeDesc = updatedFields && 'description' in updatedFields ? updatedFields.description : description;
+      const activeDueDate = updatedFields && 'dueDate' in updatedFields ? updatedFields.dueDate : dueDate;
+      const activePriority = updatedFields && 'priority' in updatedFields ? updatedFields.priority : priority;
+      const activeListId = updatedFields && 'listId' in updatedFields ? updatedFields.listId : listId;
+      const activeRrule = updatedFields && 'rrule' in updatedFields ? updatedFields.rrule : rrule;
+      const activeTagsStr = updatedFields && 'tagsStr' in updatedFields ? updatedFields.tagsStr : tagsStr;
+
+      const tags = (activeTagsStr || '')
         .split(',')
         .map((t) => t.trim().toLowerCase())
         .filter(Boolean);
 
       await onUpdate(taskId, {
-        title: title.trim(),
-        description: description.trim() || null,
-        dueDate: dueDate || null,
-        priority,
-        listId,
-        rrule: rrule.trim() || null,
+        title: (activeTitle || '').trim(),
+        description: (activeDesc || '').trim() || null,
+        dueDate: activeDueDate || null,
+        priority: activePriority,
+        listId: activeListId,
+        rrule: (activeRrule || '').trim() || null,
         tags,
       });
     } catch (err) {
@@ -112,7 +128,7 @@ export default function TaskPanel({
                   type="text"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  onBlur={handleSave}
+                  onBlur={() => handleSave()}
                   className="title-field"
                 />
               </div>
@@ -123,7 +139,7 @@ export default function TaskPanel({
                   value={description}
                   placeholder="Add a description..."
                   onChange={(e) => setDescription(e.target.value)}
-                  onBlur={handleSave}
+                  onBlur={() => handleSave()}
                   rows={3}
                 />
               </div>
@@ -134,8 +150,9 @@ export default function TaskPanel({
                   <select
                     value={listId}
                     onChange={(e) => {
-                      setListId(e.target.value);
-                      setTimeout(handleSave, 50);
+                      const value = e.target.value;
+                      setListId(value);
+                      handleSave({ listId: value });
                     }}
                   >
                     {lists.map((l) => (
@@ -152,8 +169,9 @@ export default function TaskPanel({
                     type="date"
                     value={dueDate}
                     onChange={(e) => {
-                      setDueDate(e.target.value);
-                      setTimeout(handleSave, 50);
+                      const value = e.target.value;
+                      setDueDate(value);
+                      handleSave({ dueDate: value });
                     }}
                   />
                 </div>
@@ -165,8 +183,9 @@ export default function TaskPanel({
                   <select
                     value={priority}
                     onChange={(e) => {
-                      setPriority(Number(e.target.value) as any);
-                      setTimeout(handleSave, 50);
+                      const value = Number(e.target.value) as any;
+                      setPriority(value);
+                      handleSave({ priority: value });
                     }}
                   >
                     <option value={0}>None</option>
@@ -183,7 +202,7 @@ export default function TaskPanel({
                     value={rrule}
                     placeholder="e.g. FREQ=WEEKLY"
                     onChange={(e) => setRrule(e.target.value)}
-                    onBlur={handleSave}
+                    onBlur={() => handleSave()}
                   />
                 </div>
               </div>
@@ -195,7 +214,7 @@ export default function TaskPanel({
                   value={tagsStr}
                   placeholder="work, personal, urgent"
                   onChange={(e) => setTagsStr(e.target.value)}
-                  onBlur={handleSave}
+                  onBlur={() => handleSave()}
                 />
               </div>
 

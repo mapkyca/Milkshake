@@ -24,7 +24,7 @@ function buildSample() {
         priority: 'P1',
         date_created: 1000000000000,
         date_modified: 1000000000000,
-        date_due: 1750032000000, // 2026-06-15
+        date_due: 1781481600000, // 2026-06-15
         tags: ['shopping', 'household'],
       },
       {
