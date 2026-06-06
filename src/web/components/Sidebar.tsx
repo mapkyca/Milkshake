@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
 interface SidebarProps {
@@ -16,6 +17,7 @@ export default function Sidebar({
   onCreateList,
   onDeleteList,
 }: SidebarProps) {
+  const queryClient = useQueryClient();
   const [newListName, setNewListName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -42,6 +44,8 @@ export default function Sidebar({
     setIsSyncing(true);
     try {
       const res = await api.syncObsidian();
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['task'] });
       alert(`Sync Complete!\nWritten: ${res.tasksWritten} tasks.\nCompletions Synced: ${res.completedTasksDetected}.`);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Obsidian sync failed');
