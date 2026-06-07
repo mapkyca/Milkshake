@@ -1,11 +1,22 @@
 import { RRule } from 'rrule';
 import { addDays } from 'date-fns';
 
-/**
- * Normalise an RRULE string: strip the "RRULE:" prefix if present.
- */
 export function normaliseRRule(raw: string): string {
-  return raw.replace(/^RRULE:/i, '').trim();
+  let cleaned = raw.replace(/^RRULE:/i, '').trim();
+
+  const customPattern = /^(?:FREQ=)?EVERY\s+(\d+)\s+(DAY|WEEK|MONTH|YEAR)S?$/i;
+  const match = cleaned.match(customPattern);
+  if (match) {
+    const interval = match[1];
+    const unit = match[2].toUpperCase();
+    let freq = 'DAILY';
+    if (unit === 'WEEK') freq = 'WEEKLY';
+    else if (unit === 'MONTH') freq = 'MONTHLY';
+    else if (unit === 'YEAR') freq = 'YEARLY';
+    return `FREQ=${freq};INTERVAL=${interval}`;
+  }
+
+  return cleaned;
 }
 
 /**

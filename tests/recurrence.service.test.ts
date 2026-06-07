@@ -11,11 +11,17 @@ describe('RecurrenceService', () => {
   it('should normalise RRULE string', () => {
     expect(normaliseRRule('RRULE:FREQ=DAILY')).toBe('FREQ=DAILY');
     expect(normaliseRRule('FREQ=WEEKLY')).toBe('FREQ=WEEKLY');
+    expect(normaliseRRule('FREQ=EVERY 3 WEEKS')).toBe('FREQ=WEEKLY;INTERVAL=3');
+    expect(normaliseRRule('EVERY 2 MONTHS')).toBe('FREQ=MONTHLY;INTERVAL=2');
+    expect(normaliseRRule('EVERY 5 YEARS')).toBe('FREQ=YEARLY;INTERVAL=5');
+    expect(normaliseRRule('EVERY 10 DAYS')).toBe('FREQ=DAILY;INTERVAL=10');
   });
 
   it('should validate RRULE', () => {
     expect(isValidRRule('FREQ=DAILY')).toBe(true);
     expect(isValidRRule('INVALID_RULE')).toBe(false);
+    expect(isValidRRule('EVERY 3 WEEKS')).toBe(true);
+    expect(isValidRRule('EVERY 2 MONTHS')).toBe(true);
   });
 
   it('should compute next occurrence', () => {
