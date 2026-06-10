@@ -13,7 +13,30 @@ export default function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   // Fetch all active lists
-  const { lists, createList, deleteList } = useLists();
+  const { lists, createList, updateList, deleteList } = useLists();
+
+  const handleReorderLists = async (draggedId: string, targetId: string) => {
+    const reordered = [...lists];
+    const dragIdx = reordered.findIndex((l) => l.id === draggedId);
+    const targetIdx = reordered.findIndex((l) => l.id === targetId);
+    if (dragIdx === -1 || targetIdx === -1 || dragIdx === targetIdx) return;
+
+    const [item] = reordered.splice(dragIdx, 1);
+    reordered.splice(targetIdx, 0, item);
+
+    try {
+      await Promise.all(
+        reordered.map((list, index) => {
+          if (list.sortOrder !== index) {
+            return updateList({ id: list.id, input: { sortOrder: index } });
+          }
+          return Promise.resolve();
+        })
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to reorder lists');
+    }
+  };
 
   // Get active filters based on selection
   const filters: Record<string, any> = {};
@@ -91,6 +114,7 @@ export default function App() {
         onDeleteList={async (id) => {
           await deleteList(id);
         }}
+        onReorderList={handleReorderLists}
       />
 
       <main className="main-content">

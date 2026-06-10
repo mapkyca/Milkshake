@@ -38,6 +38,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ name }),
   }),
+  updateList: (id: string, input: { name?: string; sortOrder?: number }) => request<any>(`/lists/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  }),
   deleteList: (id: string) => request<void>(`/lists/${id}`, {
     method: 'DELETE',
   }),

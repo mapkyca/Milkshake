@@ -16,6 +16,13 @@ export function useLists() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: { name?: string; sortOrder?: number } }) => api.updateList(id, input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['lists'] });
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: api.deleteList,
     onSuccess: () => {
@@ -28,6 +35,7 @@ export function useLists() {
     isLoading: query.isLoading,
     error: query.error,
     createList: createMutation.mutateAsync,
+    updateList: updateMutation.mutateAsync,
     deleteList: deleteMutation.mutateAsync,
   };
 }

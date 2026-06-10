@@ -8,6 +8,7 @@ interface SidebarProps {
   onViewChange: (view: 'today' | 'upcoming' | string) => void;
   onCreateList: (name: string) => Promise<void>;
   onDeleteList: (id: string) => Promise<void>;
+  onReorderList: (draggedId: string, targetId: string) => Promise<void>;
 }
 
 export default function Sidebar({
@@ -16,6 +17,7 @@ export default function Sidebar({
   onViewChange,
   onCreateList,
   onDeleteList,
+  onReorderList,
 }: SidebarProps) {
   const queryClient = useQueryClient();
   const [newListName, setNewListName] = useState('');
@@ -24,6 +26,39 @@ export default function Sidebar({
   const [rtmPath, setRtmPath] = useState('');
   const [showRtmModal, setShowRtmModal] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    setDraggedId(id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, id: string) => {
+    e.preventDefault();
+    if (draggedId !== id) {
+      setDragOverId(id);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverId(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedId(null);
+    setDragOverId(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (draggedId && draggedId !== targetId) {
+      await onReorderList(draggedId, targetId);
+    }
+    setDraggedId(null);
+    setDragOverId(null);
+  };
 
   const handleAddListSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,8 +151,16 @@ export default function Sidebar({
           {lists.map((l) => (
             <div
               key={l.id}
-              className={`nav-item list-item ${activeView === l.id ? 'active' : ''}`}
+              className={`nav-item list-item ${activeView === l.id ? 'active' : ''} ${
+                draggedId === l.id ? 'dragging' : ''
+              } ${dragOverId === l.id ? 'drag-over' : ''}`}
               onClick={() => onViewChange(l.id)}
+              draggable
+              onDragStart={(e) => handleDragStart(e, l.id)}
+              onDragOver={(e) => handleDragOver(e, l.id)}
+              onDragLeave={handleDragLeave}
+              onDragEnd={handleDragEnd}
+              onDrop={(e) => handleDrop(e, l.id)}
             >
               <span className="nav-icon">📁</span>
               <span className="list-name">{l.name}</span>
@@ -255,6 +298,18 @@ export default function Sidebar({
         .list-item {
           justify-content: space-between;
           position: relative;
+          cursor: grab;
+        }
+        .list-item:active {
+          cursor: grabbing;
+        }
+        .list-item.dragging {
+          opacity: 0.4;
+          border: 1px dashed rgba(255, 255, 255, 0.2);
+        }
+        .list-item.drag-over {
+          border: 1px dashed var(--accent-primary);
+          background: rgba(255, 255, 255, 0.05);
         }
         .list-name {
           flex: 1;
