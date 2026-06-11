@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import SmartListEditor from './SmartListEditor';
 
 interface SidebarProps {
   lists: any[];
@@ -9,6 +10,8 @@ interface SidebarProps {
   onCreateList: (name: string) => Promise<void>;
   onDeleteList: (id: string) => Promise<void>;
   onReorderList: (draggedId: string, targetId: string) => Promise<void>;
+  onCreateSmartList: (name: string, filter: string) => Promise<void>;
+  onUpdateSmartList: (id: string, name: string, filter: string) => Promise<void>;
 }
 
 export default function Sidebar({
@@ -18,6 +21,8 @@ export default function Sidebar({
   onCreateList,
   onDeleteList,
   onReorderList,
+  onCreateSmartList,
+  onUpdateSmartList,
 }: SidebarProps) {
   const queryClient = useQueryClient();
   const [newListName, setNewListName] = useState('');
@@ -29,6 +34,10 @@ export default function Sidebar({
 
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  // Smart List Editor state
+  const [isSmartEditorOpen, setIsSmartEditorOpen] = useState(false);
+  const [editingSmartList, setEditingSmartList] = useState<any | null>(null);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedId(id);
@@ -122,6 +131,24 @@ export default function Sidebar({
     }
   };
 
+  const handleEditSmartListClick = (e: React.MouseEvent, sl: any) => {
+    e.stopPropagation();
+    setEditingSmartList(sl);
+    setIsSmartEditorOpen(true);
+  };
+
+  const handleSaveSmartList = async (name: string, filter: string) => {
+    if (editingSmartList) {
+      await onUpdateSmartList(editingSmartList.id, name, filter);
+    } else {
+      await onCreateSmartList(name, filter);
+    }
+    queryClient.invalidateQueries({ queryKey: ['lists'] });
+  };
+
+  const normalLists = lists.filter((l) => !l.isSmart);
+  const smartLists = lists.filter((l) => l.isSmart);
+
   return (
     <aside className="sidebar glass-panel">
       <div className="sidebar-logo">
@@ -145,10 +172,11 @@ export default function Sidebar({
         </div>
       </nav>
 
+      {/* Normal Lists Section */}
       <div className="nav-group lists-group">
         <h3>Lists</h3>
         <div className="lists-list">
-          {lists.map((l) => (
+          {normalLists.map((l) => (
             <div
               key={l.id}
               className={`nav-item list-item ${activeView === l.id ? 'active' : ''} ${
@@ -190,6 +218,59 @@ export default function Sidebar({
         </form>
       </div>
 
+      {/* Smart Lists Section */}
+      <div className="nav-group smart-lists-group">
+        <h3>Smart Lists</h3>
+        <div className="lists-list">
+          {smartLists.map((l) => (
+            <div
+              key={l.id}
+              className={`nav-item list-item ${activeView === l.id ? 'active' : ''} ${
+                draggedId === l.id ? 'dragging' : ''
+              } ${dragOverId === l.id ? 'drag-over' : ''}`}
+              onClick={() => onViewChange(l.id)}
+              draggable
+              onDragStart={(e) => handleDragStart(e, l.id)}
+              onDragOver={(e) => handleDragOver(e, l.id)}
+              onDragLeave={handleDragLeave}
+              onDragEnd={handleDragEnd}
+              onDrop={(e) => handleDrop(e, l.id)}
+            >
+              <span className="nav-icon">⚡</span>
+              <span className="list-name" title={l.smartFilter || ''}>
+                {l.name} {!l.isEnabled && <span className="draft-badge">draft</span>}
+              </span>
+              <div className="list-item-actions">
+                <button
+                  className="edit-list-btn"
+                  onClick={(e) => handleEditSmartListClick(e, l)}
+                  title="Edit Smart List"
+                >
+                  ✎
+                </button>
+                <button
+                  className="delete-list-btn"
+                  onClick={(e) => handleDeleteListClick(e, l.id, l.name)}
+                  title="Delete Smart List"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <button
+          className="add-smart-list-btn"
+          onClick={() => {
+            setEditingSmartList(null);
+            setIsSmartEditorOpen(true);
+          }}
+        >
+          + Add Smart List
+        </button>
+      </div>
+
       <div className="sidebar-actions">
         <button className="glow-btn sync-btn" onClick={handleSyncObsidian} disabled={isSyncing}>
           {isSyncing ? 'Syncing...' : '🔄 Sync Obsidian'}
@@ -223,6 +304,14 @@ export default function Sidebar({
         </div>
       )}
 
+      {/* Smart List Editor Modal */}
+      <SmartListEditor
+        isOpen={isSmartEditorOpen}
+        onClose={() => setIsSmartEditorOpen(false)}
+        initialList={editingSmartList}
+        onSave={handleSaveSmartList}
+      />
+
       <style>{`
         .sidebar {
           width: 280px;
@@ -247,7 +336,16 @@ export default function Sidebar({
           color: white;
         }
         .nav-group {
-          margin-bottom: 28px;
+          margin-bottom: 24px;
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+        }
+        .lists-group {
+          flex: 1.2;
+        }
+        .smart-lists-group {
+          flex: 1;
         }
         .nav-group h3 {
           font-family: var(--font-heading);
@@ -284,12 +382,6 @@ export default function Sidebar({
           margin-right: 12px;
           font-size: 1.1rem;
         }
-        .lists-group {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          min-height: 0;
-        }
         .lists-list {
           overflow-y: auto;
           flex: 1;
@@ -317,7 +409,24 @@ export default function Sidebar({
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+          display: flex;
+          align-items: center;
+          gap: 6px;
         }
+        .draft-badge {
+          font-size: 0.65rem;
+          text-transform: uppercase;
+          background: rgba(239, 68, 68, 0.15);
+          color: var(--priority-high);
+          padding: 1px 4px;
+          border-radius: 4px;
+          font-weight: 600;
+        }
+        .list-item-actions {
+          display: flex;
+          align-items: center;
+        }
+        .edit-list-btn,
         .delete-list-btn {
           background: transparent;
           border: none;
@@ -327,11 +436,18 @@ export default function Sidebar({
           opacity: 0;
           transition: var(--transition-smooth);
         }
+        .edit-list-btn {
+          margin-right: 8px;
+        }
+        .list-item:hover .edit-list-btn,
         .list-item:hover .delete-list-btn {
           opacity: 1;
         }
         .delete-list-btn:hover {
           color: var(--priority-high);
+        }
+        .edit-list-btn:hover {
+          color: var(--accent-secondary);
         }
         .add-list-form {
           display: flex;
@@ -355,6 +471,24 @@ export default function Sidebar({
           border-radius: var(--radius-sm);
           cursor: pointer;
           font-weight: bold;
+        }
+        .add-smart-list-btn {
+          background: transparent;
+          border: 1px dashed rgba(255, 255, 255, 0.1);
+          color: var(--text-secondary);
+          padding: 8px;
+          border-radius: var(--radius-md);
+          font-family: var(--font-heading);
+          font-size: 0.85rem;
+          cursor: pointer;
+          transition: var(--transition-smooth);
+          text-align: center;
+          margin-top: 4px;
+        }
+        .add-smart-list-btn:hover {
+          border-color: var(--accent-primary);
+          color: white;
+          background: rgba(255, 255, 255, 0.02);
         }
         .sidebar-actions {
           display: flex;

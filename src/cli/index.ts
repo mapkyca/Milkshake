@@ -1,9 +1,10 @@
 import { Command } from 'commander';
 import { addDays, format, parseISO } from 'date-fns';
 import { initDb, destroyDb } from '../db/knex';
-import { getLists, createList } from '../services/ListService';
-import { createTask, getTasks, getTask, completeTask } from '../services/TaskService';
+import { getLists, getList, createList, updateList } from '../services/ListService';
+import { createTask, getTasks, getTask, completeTask, getAllTasksForEvaluation } from '../services/TaskService';
 import { importRTM } from '../services/ImportService';
+import { tokenize, parse, normalize, validate, evaluateSLQL } from '../services/slql';
 import { syncDailyNote, readCompletionsFromNote } from '../services/ObsidianService';
 import type { Priority } from '../types';
 
@@ -272,6 +273,208 @@ program
       const syncRes = await syncDailyNote(date);
       console.log(`Daily note updated: ${syncRes.notePath}`);
       console.log(`Tasks written:      ${syncRes.tasksWritten}`);
+    })
+  );
+
+// ─── smart-list subcommands ──────────────────────────────────────────────────
+const smartListCmd = program
+  .command('smart-list')
+  .description('Manage smart lists');
+
+// smart-list list
+smartListCmd
+  .command('list')
+  .description('List all active smart lists')
+  .action(
+    makeAction(async () => {
+      const all = await getLists();
+      const smartLists = all.filter((l) => l.isSmart);
+
+      if (smartLists.length === 0) {
+        console.log('No smart lists found.');
+        return;
+      }
+
+      console.log(''.padEnd(80, '-'));
+      console.log(
+        `${'ID'.padEnd(38)} | ${'Name'.padEnd(20)} | ${'Status'.padEnd(8)} | ${'Filter'}`
+      );
+      console.log(''.padEnd(80, '-'));
+
+      for (const sl of smartLists) {
+        const statusStr = sl.isEnabled ? 'Enabled' : 'Draft';
+        console.log(
+          `${sl.id.padEnd(38)} | ${sl.name.substring(0, 20).padEnd(20)} | ${statusStr.padEnd(8)} | ${sl.smartFilter || '-'}`
+        );
+      }
+      console.log(''.padEnd(80, '-'));
+    })
+  );
+
+// smart-list show <id>
+smartListCmd
+  .command('show <id>')
+  .description('Show details of a smart list')
+  .action(
+    makeAction(async (id) => {
+      const sl = await getList(id);
+      if (!sl.isSmart) {
+        console.error(`Error: List "${id}" is not a smart list.`);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.log(''.padEnd(60, '='));
+      console.log(`Smart List:  ${sl.name}`);
+      console.log(`ID:          ${sl.id}`);
+      console.log(`Status:      ${sl.isEnabled ? 'Enabled' : 'Draft'}`);
+      console.log(`Filter:      ${sl.smartFilter}`);
+      console.log(`Sort Order:  ${sl.sortOrder}`);
+      console.log(`Created At:  ${sl.createdAt}`);
+      console.log(`Updated At:  ${sl.updatedAt}`);
+      if (sl.rtmId) {
+        console.log(`RTM ID:      ${sl.rtmId}`);
+        console.log(`RTM Filter:  ${sl.rtmFilter}`);
+      }
+      console.log(''.padEnd(60, '='));
+    })
+  );
+
+// smart-list create <name>
+smartListCmd
+  .command('create <name>')
+  .description('Create a new smart list')
+  .requiredOption('-f, --filter <expression>', 'SLQL filter expression')
+  .action(
+    makeAction(async (name, options) => {
+      const filter = options.filter;
+      // Validate
+      let normalizedAst: any = null;
+      try {
+        const tokens = tokenize(filter);
+        const ast = parse(tokens);
+        normalizedAst = normalize(ast);
+        validate(normalizedAst);
+      } catch (err: any) {
+        console.error(`Invalid filter expression: ${err.message}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      const sl = await createList({
+        name,
+        isSmart: true,
+        smartFilter: filter,
+        normalizedAst,
+        isEnabled: true,
+      });
+
+      console.log(`Smart list created successfully!`);
+      console.log(`ID:     ${sl.id}`);
+      console.log(`Name:   ${sl.name}`);
+      console.log(`Filter: ${sl.smartFilter}`);
+    })
+  );
+
+// smart-list update <id>
+smartListCmd
+  .command('update <id>')
+  .description('Update an existing smart list')
+  .option('-f, --filter <expression>', 'New SLQL filter expression')
+  .option('-n, --name <name>', 'New name')
+  .action(
+    makeAction(async (id, options) => {
+      const updateInput: any = {};
+      if (options.name) updateInput.name = options.name;
+
+      if (options.filter) {
+        const filter = options.filter;
+        try {
+          const tokens = tokenize(filter);
+          const ast = parse(tokens);
+          const normalized = normalize(ast);
+          validate(normalized);
+          updateInput.smartFilter = filter;
+          updateInput.normalizedAst = normalized;
+        } catch (err: any) {
+          console.error(`Invalid filter expression: ${err.message}`);
+          process.exitCode = 1;
+          return;
+        }
+      }
+
+      const sl = await updateList(id, updateInput);
+      console.log(`Smart list updated successfully!`);
+      console.log(`ID:     ${sl.id}`);
+      console.log(`Name:   ${sl.name}`);
+      console.log(`Filter: ${sl.smartFilter}`);
+    })
+  );
+
+// smart-list validate <filter>
+smartListCmd
+  .command('validate <filter>')
+  .description('Validate an SLQL filter expression')
+  .action(
+    makeAction(async (filter) => {
+      try {
+        const tokens = tokenize(filter);
+        const ast = parse(tokens);
+        const normalized = normalize(ast);
+        validate(normalized);
+        console.log('Filter expression is valid! ✅');
+      } catch (err: any) {
+        console.error(`Validation failed: ❌\n${err.message}`);
+        process.exitCode = 1;
+      }
+    })
+  );
+
+// smart-list preview <filter>
+smartListCmd
+  .command('preview <filter>')
+  .description('Preview tasks matching an SLQL filter expression')
+  .action(
+    makeAction(async (filter) => {
+      try {
+        const tokens = tokenize(filter);
+        const ast = parse(tokens);
+        const normalized = normalize(ast);
+        validate(normalized);
+
+        const allTasks = await getAllTasksForEvaluation();
+        const allLists = await getLists();
+        const matchingTasks = evaluateSLQL(filter, allTasks, allLists, {
+          now: new Date(),
+          timezone: 'Europe/London',
+          startOfWeek: 'monday',
+        });
+
+        if (matchingTasks.length === 0) {
+          console.log('No matching tasks found.');
+          return;
+        }
+
+        console.log(`Found ${matchingTasks.length} matching tasks:`);
+        console.log(''.padEnd(80, '-'));
+        console.log(
+          `${'ID'.padEnd(38)} | ${'Title'.padEnd(20)} | ${'Due'.padEnd(10)} | ${'Pri'.padEnd(3)} | ${'Status'}`
+        );
+        console.log(''.padEnd(80, '-'));
+
+        for (const t of matchingTasks) {
+          const priStr = t.priority > 0 ? `P${t.priority}` : '-';
+          const dueStr = t.dueDate || '-';
+          const statusStr = t.isCompleted ? 'Completed' : 'Incomplete';
+          console.log(
+            `${t.id.padEnd(38)} | ${t.title.substring(0, 20).padEnd(20)} | ${dueStr.padEnd(10)} | ${priStr.padEnd(3)} | ${statusStr}`
+          );
+        }
+        console.log(''.padEnd(80, '-'));
+      } catch (err: any) {
+        console.error(`Preview failed: ${err.message}`);
+        process.exitCode = 1;
+      }
     })
   );
 

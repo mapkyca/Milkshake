@@ -30,6 +30,20 @@ export function useLists() {
     },
   });
 
+  const createSmartMutation = useMutation({
+    mutationFn: ({ name, filter }: { name: string; filter: string }) => api.createSmartList(name, filter),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['lists'] });
+    },
+  });
+
+  const updateSmartMutation = useMutation({
+    mutationFn: ({ id, name, filter }: { id: string; name?: string; filter?: string }) => api.updateSmartList(id, { name, filter }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['lists'] });
+    },
+  });
+
   return {
     lists: query.data ?? [],
     isLoading: query.isLoading,
@@ -37,5 +51,7 @@ export function useLists() {
     createList: createMutation.mutateAsync,
     updateList: updateMutation.mutateAsync,
     deleteList: deleteMutation.mutateAsync,
+    createSmartList: createSmartMutation.mutateAsync,
+    updateSmartList: updateSmartMutation.mutateAsync,
   };
 }

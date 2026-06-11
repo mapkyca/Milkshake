@@ -46,6 +46,24 @@ export const api = {
     method: 'DELETE',
   }),
 
+  // Smart Lists
+  createSmartList: (name: string, filter: string) => request<any>('/smart-lists', {
+    method: 'POST',
+    body: JSON.stringify({ name, filter }),
+  }),
+  updateSmartList: (id: string, input: { name?: string; filter?: string; isEnabled?: boolean }) => request<any>(`/smart-lists/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  }),
+  validateFilter: (filter: string) => request<{ valid: boolean; error?: string; type?: string; line?: number; column?: number }>('/smart-lists/validate', {
+    method: 'POST',
+    body: JSON.stringify({ filter }),
+  }),
+  previewFilter: (filter: string) => request<{ valid: boolean; count: number; tasks: any[]; error?: string; type?: string; line?: number; column?: number }>('/smart-lists/preview', {
+    method: 'POST',
+    body: JSON.stringify({ filter }),
+  }),
+
   // Tasks
   getTasks: (filters: Record<string, any> = {}) => {
     const params = new URLSearchParams();

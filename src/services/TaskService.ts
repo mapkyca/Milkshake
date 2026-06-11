@@ -2,6 +2,8 @@ import { randomUUID } from 'crypto';
 import { format } from 'date-fns';
 import { getDb } from '../db/knex';
 import { computeNextDueDate } from './RecurrenceService';
+import { getLists } from './ListService';
+import { evaluateSLQL } from './slql';
 import type {
   Task,
   TaskRow,
@@ -80,6 +82,71 @@ function todayString(): string {
 
 export async function getTasks(filters: TaskFilters = {}): Promise<Task[]> {
   const db = getDb();
+
+  // Check if listId is a smart list
+  if (filters.listId) {
+    const listRow = await db('lists').where({ id: filters.listId }).first();
+    if (listRow && listRow.is_smart === 1 && listRow.smart_filter) {
+      const all = await getAllTasksForEvaluation();
+      const lists = await getLists();
+      let tasks = evaluateSLQL(listRow.smart_filter, all, lists, {
+        now: new Date(),
+        timezone: 'Europe/London',
+        startOfWeek: 'monday',
+      });
+      if (filters.completed !== undefined) {
+        tasks = tasks.filter((t) => t.isCompleted === filters.completed);
+      }
+      return tasks;
+    }
+  }
+
+  // If evaluating today/upcoming via SLQL
+  if (filters.today || filters.upcoming) {
+    const all = await getAllTasksForEvaluation();
+    const lists = await getLists();
+    const timezone = 'Europe/London';
+    const now = new Date();
+    let tasks: Task[];
+
+    if (filters.today) {
+      tasks = evaluateSLQL("status:any and (due:today or due:overdue)", all, lists, {
+        now,
+        timezone,
+        startOfWeek: 'monday',
+      });
+    } else {
+      const todayStr = format(now, 'yyyy-MM-dd');
+      const in7 = format(new Date(now.getTime() + 7 * 86_400_000), 'yyyy-MM-dd');
+      const queryStr = `status:any and due>${todayStr} and due<=${in7}`;
+      tasks = evaluateSLQL(queryStr, all, lists, {
+        now,
+        timezone,
+        startOfWeek: 'monday',
+      });
+    }
+
+    // Apply additional filters
+    if (filters.listId) {
+      tasks = tasks.filter((t) => t.listId === filters.listId);
+    }
+    if (filters.tags && filters.tags.length > 0) {
+      tasks = tasks.filter((t) => t.tags.some((tag) => filters.tags!.includes(tag)));
+    }
+    if (filters.priority !== undefined) {
+      tasks = tasks.filter((t) => t.priority === filters.priority);
+    }
+    if (filters.search) {
+      const term = filters.search.toLowerCase();
+      tasks = tasks.filter(
+        (t) =>
+          t.title.toLowerCase().includes(term) ||
+          (t.description || '').toLowerCase().includes(term)
+      );
+    }
+    return tasks;
+  }
+
   let query = db<TaskRow>('tasks').where({ is_archived: 0 });
 
   if (filters.listId) query = query.where({ list_id: filters.listId });
@@ -294,4 +361,30 @@ export async function addNote(taskId: string, body: string): Promise<TaskNote> {
 
   const row = await db<TaskNoteRow>('task_notes').where({ id }).first();
   return rowToNote(row!);
+}
+
+export async function getAllTasksForEvaluation(): Promise<Task[]> {
+  const db = getDb();
+  // Fetch all non-archived tasks
+  const rows = await db<TaskRow>('tasks').where({ is_archived: 0 });
+  const tagMap = await getTagsForTasks(rows.map((r) => r.id));
+
+  const tasks = rows.map((r) => rowToTask(r, tagMap.get(r.id) ?? []));
+
+  // Attach notes and subtasks
+  for (const task of tasks) {
+    const noteRows = await db<TaskNoteRow>('task_notes')
+      .where({ task_id: task.id })
+      .orderBy('created_at', 'asc');
+    task.notes = noteRows.map(rowToNote);
+
+    const subtaskRows = await db<TaskRow>('tasks')
+      .where({ parent_id: task.id, is_archived: 0 })
+      .orderBy('created_at', 'asc');
+    const subtaskIds = subtaskRows.map((r) => r.id);
+    const subtaskTagMap = await getTagsForTasks(subtaskIds);
+    task.subtasks = subtaskRows.map((r) => rowToTask(r, subtaskTagMap.get(r.id) ?? []));
+  }
+
+  return tasks;
 }

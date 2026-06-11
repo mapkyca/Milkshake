@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getLists, getList, createList, updateList, deleteList, archiveList } from '../../services/ListService';
-import { getTasks } from '../../services/TaskService';
+import { getTasks, getAllTasksForEvaluation } from '../../services/TaskService';
+import { evaluateSLQL } from '../../services/slql';
 
 const router = Router();
 
@@ -68,6 +69,24 @@ router.delete('/:id', async (req, res, next) => {
 // GET tasks for a list
 router.get('/:id/tasks', async (req, res, next) => {
   try {
+    const list = await getList(req.params.id);
+    if (list.isSmart && list.smartFilter) {
+      const timezone = (req.query.timezone as string) || 'Europe/London';
+      const nowStr = (req.query.now as string) || new Date().toISOString();
+      const startOfWeek = (req.query.startOfWeek as 'monday' | 'sunday') || 'monday';
+      const now = new Date(nowStr);
+
+      const allTasks = await getAllTasksForEvaluation();
+      const allLists = await getLists();
+      const matchingTasks = evaluateSLQL(list.smartFilter, allTasks, allLists, {
+        now,
+        timezone,
+        startOfWeek,
+      });
+      res.json({ data: matchingTasks });
+      return;
+    }
+
     const { completed } = req.query;
     const isCompleted = completed === 'true' ? true : completed === 'false' ? false : undefined;
     const tasks = await getTasks({

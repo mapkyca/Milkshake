@@ -11,6 +11,11 @@ export interface List {
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
+  normalizedAst?: any | null;
+  sortSettings?: string[] | null;
+  isEnabled: boolean;
+  rtmId?: string | null;
+  rtmFilter?: string | null;
 }
 
 export interface Task {
@@ -56,11 +61,24 @@ export interface ImportRecord {
 export interface CreateListInput {
   name: string;
   sortOrder?: number;
+  isSmart?: boolean;
+  smartFilter?: string | null;
+  normalizedAst?: any | null;
+  sortSettings?: string[] | null;
+  isEnabled?: boolean;
+  rtmId?: string | null;
+  rtmFilter?: string | null;
 }
 
 export interface UpdateListInput {
   name?: string;
   sortOrder?: number;
+  isSmart?: boolean;
+  smartFilter?: string | null;
+  normalizedAst?: any | null;
+  sortSettings?: string[] | null;
+  isEnabled?: boolean;
+  isArchived?: boolean;
 }
 
 export interface CreateTaskInput {
@@ -124,6 +142,11 @@ export interface ListRow {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  normalized_ast?: string | null;
+  sort_settings?: string | null;
+  is_enabled?: number;
+  rtm_id?: string | null;
+  rtm_filter?: string | null;
 }
 
 export interface TaskRow {

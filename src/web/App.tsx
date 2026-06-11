@@ -13,7 +13,7 @@ export default function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   // Fetch all active lists
-  const { lists, createList, updateList, deleteList } = useLists();
+  const { lists, createList, updateList, deleteList, createSmartList, updateSmartList } = useLists();
 
   const handleReorderLists = async (draggedId: string, targetId: string) => {
     const reordered = [...lists];
@@ -115,6 +115,12 @@ export default function App() {
           await deleteList(id);
         }}
         onReorderList={handleReorderLists}
+        onCreateSmartList={async (name, filter) => {
+          await createSmartList({ name, filter });
+        }}
+        onUpdateSmartList={async (id, name, filter) => {
+          await updateSmartList({ id, name, filter });
+        }}
       />
 
       <main className="main-content">

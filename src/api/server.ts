@@ -8,6 +8,7 @@ import listsRouter from './routes/lists';
 import tasksRouter from './routes/tasks';
 import syncRouter from './routes/sync';
 import importRouter from './routes/importRoute';
+import smartListsRouter from './routes/smartLists';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +24,7 @@ app.use('/api/v1/lists', listsRouter);
 app.use('/api/v1/tasks', tasksRouter);
 app.use('/api/v1/sync', syncRouter);
 app.use('/api/v1/import', importRouter);
+app.use('/api/v1/smart-lists', smartListsRouter);
 
 // Health check
 app.get('/health', (req, res) => {

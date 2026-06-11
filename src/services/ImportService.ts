@@ -2,6 +2,7 @@ import fs from 'fs';
 import { randomUUID } from 'crypto';
 import { getDb } from '../db/knex';
 import type { ImportOptions, ImportSummary, Priority } from '../types';
+import { tokenize, parse, normalize, validate } from './slql';
 
 // ─── RTM export shape (actual flat export format) ─────────────────────────────
 
@@ -45,10 +46,19 @@ interface RTMNote {
   content?: string;
 }
 
+interface RTMSmartList {
+  id: string;
+  name: string;
+  filter: string;
+  date_created?: number;
+  date_modified?: number;
+}
+
 interface RTMExport {
   lists?: RTMList[];
   tasks?: RTMTask[];
   notes?: RTMNote[];
+  smart_lists?: RTMSmartList[];
   // other top-level keys ignored
 }
 
@@ -73,6 +83,25 @@ function mapPriority(code: string): Priority {
     case 'P2': return 2;
     case 'P3': return 3;
     default:   return 0;  // 'PN' or anything else
+  }
+}
+
+/** Translate RTM smart filter string to SLQL equivalent. */
+export function translateRTMFilter(rtmFilter: string): { filter: string; success: boolean } {
+  // Map common RTM terms to SLQL equivalents
+  let translated = rtmFilter
+    .replace(/\bdueBefore:now\b/gi, 'due:overdue')
+    .replace(/\bdueBefore:today\b/gi, 'due:overdue')
+    .replace(/\bstatus:open\b/gi, 'status:incomplete');
+
+  try {
+    const tokens = tokenize(translated);
+    const ast = parse(tokens);
+    const norm = normalize(ast);
+    validate(norm);
+    return { filter: translated, success: true };
+  } catch {
+    return { filter: rtmFilter, success: false };
   }
 }
 
@@ -193,6 +222,67 @@ export async function importRTM(
           imported_at: now,
         }).onConflict(['source', 'external_id', 'entity_type']).ignore();
       }
+    }
+
+    // ── Import smart lists ────────────────────────────────────────────────────
+    const rtmSmartLists = parsed.smart_lists ?? [];
+    for (const rtmSmartList of rtmSmartLists) {
+      if (!rtmSmartList.name?.trim()) continue;
+
+      const alreadyImported = await trx('import_records')
+        .where({ source: 'rtm', external_id: rtmSmartList.id, entity_type: 'list' })
+        .first();
+
+      if (alreadyImported) {
+        summary.listsSkipped++;
+        continue;
+      }
+
+      const { filter: translatedFilter, success } = translateRTMFilter(rtmSmartList.filter || '');
+      let normalizedAstStr: string | null = null;
+      if (success) {
+        try {
+          const tokens = tokenize(translatedFilter);
+          const ast = parse(tokens);
+          const normalized = normalize(ast);
+          normalizedAstStr = JSON.stringify(normalized);
+        } catch {}
+      } else {
+        summary.errors.push(`Smart list "${rtmSmartList.name}" filter could not be translated safely. Imported as draft. Original: "${rtmSmartList.filter}"`);
+      }
+
+      const internalListId = randomUUID();
+      const maxRow = await trx('lists').max('sort_order as m').first();
+      const sortOrder = ((maxRow?.m as number | null) ?? -1) + 1;
+
+      if (!dryRun) {
+        await trx('lists').insert({
+          id: internalListId,
+          name: rtmSmartList.name.trim(),
+          is_smart: 1,
+          smart_filter: success ? translatedFilter : rtmSmartList.filter,
+          is_archived: 0,
+          sort_order: sortOrder,
+          created_at: msToISO(rtmSmartList.date_created) ?? now,
+          updated_at: msToISO(rtmSmartList.date_modified) ?? now,
+          normalized_ast: normalizedAstStr,
+          sort_settings: null,
+          is_enabled: success ? 1 : 0,
+          rtm_id: rtmSmartList.id,
+          rtm_filter: rtmSmartList.filter,
+        });
+
+        await trx('import_records').insert({
+          id: randomUUID(),
+          source: 'rtm',
+          external_id: rtmSmartList.id,
+          entity_type: 'list',
+          internal_id: internalListId,
+          imported_at: now,
+        }).onConflict(['source', 'external_id', 'entity_type']).ignore();
+      }
+
+      summary.listsImported++;
     }
 
     // ── Import tasks ──────────────────────────────────────────────────────────
