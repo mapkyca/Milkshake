@@ -101,6 +101,14 @@ export default function App() {
 
   // Find list name if activeView is a listId
   const activeList = lists.find((l) => l.id === activeView);
+  const activeListIsSmart = !!activeList?.isSmart;
+
+  // Smart lists don't own tasks — for TaskCreateForm, fall back to first real list
+  const realLists = lists.filter((l) => !l.isSmart);
+  const taskCreateTargetListId =
+    activeView !== 'today' && activeView !== 'upcoming' && !activeListIsSmart
+      ? activeView
+      : undefined;
 
   return (
     <div className="app-container">
@@ -146,6 +154,8 @@ export default function App() {
           {activeView !== 'today' && activeView !== 'upcoming' && (
             <ListDetailView
               listName={activeList?.name || 'Loading List...'}
+              isSmart={activeListIsSmart}
+              smartFilter={activeList?.smartFilter}
               tasks={tasks}
               isLoading={tasksLoading}
               onSelectTask={setSelectedTaskId}
@@ -155,8 +165,8 @@ export default function App() {
         </div>
 
         <TaskCreateForm
-          lists={lists}
-          activeListId={activeView !== 'today' && activeView !== 'upcoming' ? activeView : undefined}
+          lists={realLists}
+          activeListId={taskCreateTargetListId}
           onCreate={async (input) => {
             await createTask(input);
           }}

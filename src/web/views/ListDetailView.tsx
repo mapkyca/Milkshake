@@ -3,6 +3,8 @@ import TaskRow from '../components/TaskRow';
 
 interface ListDetailViewProps {
   listName: string;
+  isSmart?: boolean;
+  smartFilter?: string | null;
   tasks: any[];
   isLoading: boolean;
   onSelectTask: (id: string) => void;
@@ -11,6 +13,8 @@ interface ListDetailViewProps {
 
 export default function ListDetailView({
   listName,
+  isSmart,
+  smartFilter,
   tasks,
   isLoading,
   onSelectTask,
@@ -22,17 +26,27 @@ export default function ListDetailView({
   return (
     <div className="view-container">
       <header className="view-header">
-        <h2>{listName}</h2>
-        <p className="subtitle">All tasks under the list "{listName}".</p>
+        <h2>{isSmart ? '✦ ' : ''}{listName}</h2>
+        <p className="subtitle">
+          {isSmart && smartFilter
+            ? <><span className="smart-badge">Smart List</span> <code className="filter-chip">{smartFilter}</code></>
+            : `All tasks under the list "${listName}".`
+          }
+        </p>
       </header>
 
       {isLoading ? (
         <div className="view-loader">Loading list tasks...</div>
       ) : tasks.length === 0 ? (
         <div className="empty-state">
-          <span className="empty-icon">📂</span>
-          <h3>Empty List</h3>
-          <p>No tasks inside "{listName}". Create one to get started!</p>
+          <span className="empty-icon">{isSmart ? '🔍' : '📂'}</span>
+          <h3>{isSmart ? 'No Matches' : 'Empty List'}</h3>
+          <p>
+            {isSmart
+              ? 'No tasks match this smart list filter. Try adjusting the filter or add tasks that meet the criteria.'
+              : `No tasks inside "${listName}". Create one to get started!`
+            }
+          </p>
         </div>
       ) : (
         <div className="task-lists-wrapper">
@@ -84,6 +98,35 @@ export default function ListDetailView({
           font-size: 0.9rem;
           color: var(--text-secondary);
           margin-top: 4px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .smart-badge {
+          display: inline-block;
+          background: rgba(99, 102, 241, 0.15);
+          color: var(--accent-primary);
+          border: 1px solid rgba(99, 102, 241, 0.3);
+          border-radius: 4px;
+          padding: 1px 7px;
+          font-size: 0.75rem;
+          font-family: var(--font-heading);
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .filter-chip {
+          display: inline-block;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 4px;
+          padding: 2px 8px;
+          font-size: 0.78rem;
+          font-family: 'Fira Code', 'Cascadia Code', monospace;
+          color: rgba(167, 243, 208, 0.85);
+          max-width: 100%;
+          word-break: break-all;
         }
         .view-loader {
           padding: 40px;

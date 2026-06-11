@@ -101,52 +101,6 @@ export async function getTasks(filters: TaskFilters = {}): Promise<Task[]> {
     }
   }
 
-  // If evaluating today/upcoming via SLQL
-  if (filters.today || filters.upcoming) {
-    const all = await getAllTasksForEvaluation();
-    const lists = await getLists();
-    const timezone = 'Europe/London';
-    const now = new Date();
-    let tasks: Task[];
-
-    if (filters.today) {
-      tasks = evaluateSLQL("status:any and (due:today or due:overdue)", all, lists, {
-        now,
-        timezone,
-        startOfWeek: 'monday',
-      });
-    } else {
-      const todayStr = format(now, 'yyyy-MM-dd');
-      const in7 = format(new Date(now.getTime() + 7 * 86_400_000), 'yyyy-MM-dd');
-      const queryStr = `status:any and due>${todayStr} and due<=${in7}`;
-      tasks = evaluateSLQL(queryStr, all, lists, {
-        now,
-        timezone,
-        startOfWeek: 'monday',
-      });
-    }
-
-    // Apply additional filters
-    if (filters.listId) {
-      tasks = tasks.filter((t) => t.listId === filters.listId);
-    }
-    if (filters.tags && filters.tags.length > 0) {
-      tasks = tasks.filter((t) => t.tags.some((tag) => filters.tags!.includes(tag)));
-    }
-    if (filters.priority !== undefined) {
-      tasks = tasks.filter((t) => t.priority === filters.priority);
-    }
-    if (filters.search) {
-      const term = filters.search.toLowerCase();
-      tasks = tasks.filter(
-        (t) =>
-          t.title.toLowerCase().includes(term) ||
-          (t.description || '').toLowerCase().includes(term)
-      );
-    }
-    return tasks;
-  }
-
   let query = db<TaskRow>('tasks').where({ is_archived: 0 });
 
   if (filters.listId) query = query.where({ list_id: filters.listId });
